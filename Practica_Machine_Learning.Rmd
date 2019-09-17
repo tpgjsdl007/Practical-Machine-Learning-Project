@@ -1,0 +1,131 @@
+---
+title: "Practical Machine Learning"
+author: "Saehun Kwak"
+date: "9/16/2019"
+output: 
+  html_document: 
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(caret);library(rpart);library(rattle);library(FSelector);library(randomForest)
+```
+
+## Introduction
+
+The goal of your project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what you think the expected out of sample error is, and why you made the choices you did. You will also use your prediction model to predict 20 different test cases.
+
+###Data Processing
+```{r Data Processing, cache = TRUE}
+#Setting seed for reproducibility
+set.seed(22)
+data <- read.csv("pml-training.csv")
+validation <- read.csv("pml-testing.csv")
+class(data$classe)
+levels(data$classe)
+dim(data)
+
+# The data have a lot of NA values. Therefore, I chose to separate the aggregated data and the raw data into 2 data frames and build models off of both. 
+
+#Identifying NA level
+NA_levels <- unique(apply(data, 2,function(x){sum(is.na(x))}))
+number_NA <- dim(data)[1]-NA_levels[2]
+non_NA <- number_NA/dim(data)[1]
+sprintf("%1.2f%%", 100*non_NA)
+
+#Setting empty spaces and div0 to be NA
+data[data == ""] <- NA
+data[data=="#DIV/0!"] <- NA
+data[data=="<NA>"] <- NA
+
+#Splitting the data for test/train
+set.seed(22)
+traindex <- createDataPartition(data$classe,p = 0.8,list = FALSE)
+train <- data[traindex,]
+test <- data[-traindex,]
+
+#Selecting non-aggregated RAW sensor data
+train_raw <- train[which(train$new_window == "no"),]
+
+#Raw sensor data without NA columns(summary data)
+train_raw <- train[!colSums(is.na(train)) > 0]
+
+#Testing NA purity
+sum(is.na(train_raw))
+
+#Splitting data to new window rows (aggregated data)
+train_sum <- train[which(train$new_window == "yes"),]
+test_sum <- test[which(test$new_window == "yes"),]
+
+#Removing full NA columns
+train_sum_clean <- subset(train_sum,
+select=-c(kurtosis_picth_belt,kurtosis_yaw_belt,kurtosis_picth_arm,kurtosis_yaw_arm,skewness_pitch_arm,kurtosis_yaw_dumbbell,skewness_yaw_dumbbell,skewness_yaw_forearm,kurtosis_yaw_forearm,skewness_yaw_belt,skewness_roll_belt.1))
+test_sum_clean <- subset(test_sum,
+select=-c(kurtosis_picth_belt,kurtosis_yaw_belt,kurtosis_picth_arm,kurtosis_yaw_arm,skewness_pitch_arm,kurtosis_yaw_dumbbell,skewness_yaw_dumbbell,skewness_yaw_forearm,kurtosis_yaw_forearm,skewness_yaw_belt,skewness_roll_belt.1))
+
+#Removing NA rows
+train_done <- train_sum_clean[complete.cases(train_sum_clean),]
+sum(is.na(train_done))
+test_done <- test_sum_clean[complete.cases(test_sum_clean),]
+sum(is.na(test_done))
+```
+
+###Model Fitting
+
+I will use a random forest model for this task. The first model (model1) achieves an estimated out of sample error rate of 0.43%. The model uses bootstrap resampling with the training set partition given above to crossvalidate against the test set. Since the fit uses all the possible (59) clean predictor variables, k-fold cross validation would be computationally intensive.
+```{R Model 1, cache = TRUE}
+#Important to not include the X row in the dataset because it is an index and the data is organized alphabetically by class outcome.
+model1 <- randomForest(classe ~. , data=train_raw[,-c(1:7)], method="class")
+pred_test1 <- predict(model1, test)
+pred_train1 <- predict(model1, train)
+confusionMatrix(pred_test1, test$classe)
+confusionMatrix(pred_train1, train$classe)
+```
+
+The second model (model2) uses feature selection to narrow down the 59 predictors to only 7 chosen Variables: classe ~ roll_belt + pitch_belt + yaw_belt + magnet_arm_x + gyros_dumbbell_y + magnet_dumbbell_y + pitch_forearm. This model achieves a 98.16% accuracy with an expected error of 1.81%. The expected error is higher, but is still very successful considering this model uses 52 fewer predictors. To create this model, 3-fold crossvalidation was implemented with the caret package.
+
+```{r Model 2, cache = TRUE}
+#Using Correlation based feature selection and best-first algorithm
+features <- cfs(classe~.,train_raw[,-c(1:7)])
+f <- as.simple.formula(features, "classe")
+fitControl <- trainControl(## 10-fold CV
+method = "cv",
+number = 3,
+## repeated ten times
+repeats = 3)
+model2 <- train(f, method = "rf", data =train_raw, trControl = fitControl)
+model2
+pred_test2 <- predict(model2, test)
+pred_train2 <- predict(model2, train)
+confusionMatrix(pred_test2, test$classe)
+confusionMatrix(pred_train2, train$classe)
+```
+
+The final model (model3) is fit using the provided summary data. This model achieves an accuracy of only 71.74%, or a 28.26% expected error rate against the test validation set. To create this model 3-fold crossvalidation was implemented with the caret package.
+
+```{R Model 3, cache = TRUE}
+#Predicting off of summary statistics
+features3 <- cfs(classe~.,train_done[,-c(1:7)])
+z <- as.simple.formula(features3, "classe")
+model3 <- train(z, method = "rf", data =train_done, trControl = fitControl)
+model3
+pred_test3 <- predict(model3, test_done)
+pred_train3 <- predict(model3, train_done)
+confusionMatrix(pred_test3, test_done$classe)
+confusionMatrix(pred_train3, train_done$classe)
+```
+
+
+## Conclusions
+
+Predicting off of the summary statistics is much less accurate. The first model performed the best overall, and will be used to predict the validation set.
+
+```{R Validation}
+predict(model1,validation)
+```
+
+The most differentiating variable is the pitch of the belt sensor. This quickly distinguishes a lot of cases where the individual performs a Class E mistake ("throwing the hips to the front").
+
+```{r pressure, echo=FALSE}
+```
