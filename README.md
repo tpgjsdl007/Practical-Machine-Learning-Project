@@ -12,3 +12,4 @@ Apply your machine learning algorithm to the 20 test cases available in the test
 Reproducibility
 Due to security concerns with the exchange of R code, your code will not be run during the evaluation by your classmates. Please be sure that if they download the repo, they will be able to view the compiled HTML version of your analysis.
 
+Adding some content... 
